@@ -6,6 +6,8 @@ import pdfplumber
 import sys
 import yaml
 
+from scipy.interpolate import interp1d
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -126,6 +128,63 @@ def round_sig(x, n_sig_digits):
   round_digits = n_sig_digits - int(math.floor(math.log10(abs(x)))) - 1
   return round(x, round_digits)
 
+def create_up_down_simple(curve):
+  curve_up_down = copy.deepcopy(curve)
+  curve_up_down['x'] = []
+  del curve_up_down['y']
+  curve_up_down['y_up'] = []
+  curve_up_down['y_down'] = []
+  low_idx = 0
+  high_idx = len(curve['y']) - 1
+  up_low = curve['y'][low_idx] > curve['y'][high_idx]
+  while low_idx <= high_idx:
+    x = curve['x'][low_idx]
+    if x != curve['x'][high_idx]:
+      print(f"Unable to extract up/down curves using a simple matching. X coordinates are not the same {x} != {curve['x'][high_idx]}.")
+      return None
+    curve_up_down['x'].append(x)
+    y_up = curve['y'][low_idx]
+    y_down = curve['y'][high_idx]
+    if up_low:
+      y_up, y_down = y_down, y_up
+    curve_up_down['y_up'].append(y_up)
+    curve_up_down['y_down'].append(y_down)
+    low_idx += 1
+    high_idx -= 1
+  return curve_up_down
+
+def create_up_down_spline(curve, n_sig_digits):
+  x_result = sorted(set(curve['x']))
+  y_result = [ [], [] ]
+  array_idx = 0
+  zipped = list(zip(curve['x'], curve['y']))
+  for array_idx in range(2):
+    points = zipped if array_idx == 0 else reversed(zipped)
+    x_list = []
+    y_list = []
+    for x, y in points:
+      if len(x_list) > 0:
+        if x_list[-1] > x:
+          break
+        if x_list[-1] == x:
+          x_list.pop()
+          y_list.pop()
+      x_list.append(x)
+      y_list.append(y)
+    if len(x_list) < 3:
+      print('No enough points to build a spline.')
+      return None
+    sp = interp1d(x_list, y_list, kind='cubic', fill_value='extrapolate')
+    for y in sp(x_result).tolist():
+      y_rounded = round_sig(y, n_sig_digits)
+      y_result[array_idx].append(y_rounded)
+  curve_up_down = copy.deepcopy(curve)
+  curve_up_down['x'] = x_result
+  del curve_up_down['y']
+  curve_up_down['y_up'] = y_result[0]
+  curve_up_down['y_down'] = y_result[1]
+  return curve_up_down
+
 def extract_curves(page, calib_data, n_sig_digits, min_n_points):
   define_scale_params(calib_data)
   page_h = page['height']
@@ -150,43 +209,28 @@ def extract_curves(page, calib_data, n_sig_digits, min_n_points):
     curve['x'] = []
     curve['y'] = []
     for point in pdf_curve['pts']:
-      point = (point[0], page_h - point[1])
+      point_page = (point[0], page_h - point[1])
+      point_plot = [ None, None ]
       for idx, direction in enumerate([ 'x', 'y' ]):
         calib = calib_data[direction]
-        plot_coord = transform(point[idx], calib['a'], calib['b'], calib['log'])
+        plot_coord = transform(point_page[idx], calib['a'], calib['b'], calib['log'])
         plot_coord = round_sig(plot_coord, n_sig_digits)
-        curve[direction].append(plot_coord)
+        point_plot[idx] = plot_coord
+      if len(curve['x']) == 0 or curve['x'][-1] != point_plot[0] or curve['y'][-1] != point_plot[1]:
+        curve['x'].append(point_plot[0])
+        curve['y'].append(point_plot[1])
     has_up_down = False
     if curve['fill']:
-      curve_up_down = copy.deepcopy(curve)
-      curve_up_down['x'] = []
-      del curve_up_down['y']
-      curve_up_down['y_up'] = []
-      curve_up_down['y_down'] = []
-      low_idx = 0
-      high_idx = len(curve['y']) - 1
-      up_low = curve['y'][low_idx] > curve['y'][high_idx]
-      all_ok = True
-      while low_idx <= high_idx:
-        x = curve['x'][low_idx]
-        if x != curve['x'][high_idx]:
-          all_ok = False
-          print(f"Unable to extract up/down curves. X coordinates are not the same {x} != {curve['x'][high_idx]}.")
-          print('curve x:', curve['x'])
-          print('curve y:', curve['y'])
-          break
-        curve_up_down['x'].append(x)
-        y_up = curve['y'][low_idx]
-        y_down = curve['y'][high_idx]
-        if up_low:
-          y_up, y_down = y_down, y_up
-        curve_up_down['y_up'].append(y_up)
-        curve_up_down['y_down'].append(y_down)
-        low_idx += 1
-        high_idx -= 1
-      if all_ok:
+      curve_up_down = create_up_down_simple(curve)
+      if not curve_up_down:
+        curve_up_down = create_up_down_spline(curve, n_sig_digits)
+      if curve_up_down:
         curves.append(curve_up_down)
         has_up_down = True
+      else:
+        print(f"Unable to extract up/down curves for curve {curve['name']}.")
+        print('curve x:', curve['x'])
+        print('curve y:', curve['y'])
     if not has_up_down:
       curves.append(curve)
   selected_curves = []
