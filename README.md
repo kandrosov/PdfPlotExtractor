@@ -13,5 +13,5 @@ If more than two points are provided, the first two will be used to transform th
 You can use `calib.yaml.pdf` to help you identify the points.
 1. Extract plot
    ```shell
-   python pdf_plot_extractor.py --calib calib.yaml --out-json plot.json --out-yaml plot.yaml --out-pdf plot_extracted.pdf plot.pdf
+   python pdf_plot_extractor.py --calib calib.yaml --json plot.json --yaml plot.yaml --out-pdf plot_extracted.pdf plot.pdf
    ```

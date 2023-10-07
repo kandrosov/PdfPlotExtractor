@@ -5,6 +5,32 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+def plot_curves(curves, out_pdf, selected_indices=None, selected_names=None):
+  pts_per_inch = 72.
+  if 'page_setup' in curves:
+    plt.figure(figsize=(curves['page_setup']['width']/pts_per_inch, curves['page_setup']['height']/pts_per_inch))
+  plt.xscale('log' if curves['axis_setup']['x']['log'] else 'linear')
+  plt.yscale('log' if curves['axis_setup']['y']['log'] else 'linear')
+  for idx, curve in enumerate(curves['curves']):
+    if selected_indices and idx not in selected_indices: continue
+    if selected_names and curve['name'] not in selected_names: continue
+
+    if 'y_up' not in curve:
+      color = curve['stroking_color']
+      plt.plot(curve['x'], curve['y'], linewidth=curve['linewidth'], color=color)
+    else:
+      color = curve['non_stroking_color']
+      if not color:
+        color = curve['stroking_color']
+      plt.fill_between(curve['x'], curve['y_up'], curve['y_down'], color=color)
+    print(f'{idx}: name={curve["name"]}, color={color}')
+  if len(curves['axis_setup']['x']['range']) == 2:
+    plt.xlim(curves['axis_setup']['x']['range'])
+  if len(curves['axis_setup']['y']['range']) == 2:
+    plt.ylim(curves['axis_setup']['y']['range'])
+  plt.savefig(out_pdf, bbox_inches='tight')
+
+
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Plot extracted curves.')
@@ -31,18 +57,4 @@ if __name__ == "__main__":
   if args.name:
     selected_names = args.name.split(',')
 
-  plt.xscale('log' if curves['axis_setup']['x']['log'] else 'linear')
-  plt.yscale('log' if curves['axis_setup']['y']['log'] else 'linear')
-  for idx, curve in enumerate(curves['curves']):
-    if selected_indices and idx not in selected_indices: continue
-    if selected_names and curve['name'] not in selected_names: continue
-    print(f'{idx}: name={curve["name"]}, color={curve["stroking_color"]}')
-    if 'y_up' not in curve:
-      plt.plot(curve['x'], curve['y'], linewidth=curve['linewidth'], color=curve['stroking_color'])
-    else:
-      plt.fill_between(curve['x'], curve['y_up'], curve['y_down'], color=curve['stroking_color'])
-  if len(curves['axis_setup']['x']['range']) == 2:
-    plt.xlim(curves['axis_setup']['x']['range'])
-  if len(curves['axis_setup']['y']['range']) == 2:
-    plt.ylim(curves['axis_setup']['y']['range'])
-  plt.savefig(args.out_pdf, bbox_inches='tight')
+  plot_curves(curves, args.out_pdf, selected_indices, selected_names)

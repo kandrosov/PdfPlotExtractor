@@ -40,6 +40,23 @@ def find_ticks(lines, direction, max_length):
     limits = [ ticks[0], ticks[-1] ]
   return unique_ticks, limits
 
+def get_rgb_color(color):
+  if color is None:
+    return None
+  if isinstance(color, list):
+    if len(color) == 3:
+      for c in color:
+        if not (isinstance(c, float) or isinstance(c, int)):
+          return None
+      return color
+  if isinstance(color, float) or isinstance(color, int):
+    color = str(color)
+  try:
+    return list(matplotlib.colors.to_rgb(color))
+  except ValueError:
+    print('ValueError', color)
+    return None
+
 def create_calib(page, calib_file, max_rel_tick_length):
   page_h, page_w = page['height'], page['width']
   ticks = {
@@ -61,6 +78,8 @@ def create_calib(page, calib_file, max_rel_tick_length):
       'range': [],
     }
   }
+  pts_per_inch = 72.
+  plt.figure(figsize=(page_w/pts_per_inch, page_h/pts_per_inch))
 
   for direction, (tick_lines, limit_lines) in ticks.items():
     for idx, tick_line in enumerate(tick_lines):
@@ -88,7 +107,7 @@ def create_calib(page, calib_file, max_rel_tick_length):
   with open(calib_file, 'w') as f:
     yaml.dump(calib_data, f)
   plt.axis('off')
-  plt.savefig(calib_file + ".pdf", bbox_inches='tight')
+  plt.savefig(os.path.splitext(calib_file)[0] + ".pdf", bbox_inches='tight')
 
 def find_ref_ticks(calib_data):
   for direction in ['x', 'y']:
@@ -163,14 +182,19 @@ def create_up_down_spline(curve, n_sig_digits):
     x_list = []
     y_list = []
     for x, y in points:
+      do_append = True
       if len(x_list) > 0:
         if x_list[-1] > x:
           break
         if x_list[-1] == x:
-          x_list.pop()
-          y_list.pop()
-      x_list.append(x)
-      y_list.append(y)
+          if len(x_list) == 1:
+            x_list.pop()
+            y_list.pop()
+          else:
+            do_append = False
+      if do_append:
+        x_list.append(x)
+        y_list.append(y)
     if len(x_list) < 3:
       print('No enough points to build a spline.')
       return None
@@ -181,8 +205,22 @@ def create_up_down_spline(curve, n_sig_digits):
   curve_up_down = copy.deepcopy(curve)
   curve_up_down['x'] = x_result
   del curve_up_down['y']
-  curve_up_down['y_up'] = y_result[0]
-  curve_up_down['y_down'] = y_result[1]
+  up_down_cnt = 0
+  down_up_cnt = 0
+  for y_idx in range(len(y_result[0])):
+    if y_result[0][y_idx] > y_result[1][y_idx]:
+      up_down_cnt += 1
+    if y_result[0][y_idx] < y_result[1][y_idx]:
+      down_up_cnt += 1
+  if up_down_cnt > 0 and down_up_cnt > 0:
+    print("Unable to satisfy up >= down condition.")
+    return None
+  if up_down_cnt > 0:
+    curve_up_down['y_up'] = y_result[0]
+    curve_up_down['y_down'] = y_result[1]
+  else:
+    curve_up_down['y_up'] = y_result[1]
+    curve_up_down['y_down'] = y_result[0]
   return curve_up_down
 
 def extract_curves(page, calib_data, n_sig_digits, min_n_points):
@@ -204,8 +242,15 @@ def extract_curves(page, calib_data, n_sig_digits, min_n_points):
   curves = []
   for idx, pdf_curve in enumerate(page['curves']):
     curve = { 'name': f'curve_{idx}' }
-    for param in [ 'linewidth', 'stroke', 'fill', 'stroking_color', 'non_stroking_color' ]:
+    for param in [ 'linewidth', 'stroke', 'fill']:
       curve[param] = pdf_curve[param]
+    for param in [ 'stroking_color', 'non_stroking_color' ]:
+      color = pdf_curve[param]
+      if color is not None:
+        color = get_rgb_color(color)
+        if not color:
+          print(f"Unable to parse {param}={pdf_curve[param]} for curve {curve['name']}.")
+      curve[param] = color
     curve['x'] = []
     curve['y'] = []
     for point in pdf_curve['pts']:
@@ -238,6 +283,7 @@ def extract_curves(page, calib_data, n_sig_digits, min_n_points):
     if not min_n_points or len(curve['x']) >= min_n_points:
       selected_curves.append(curve)
   result = {
+    'page_setup': { 'height': page_h, 'width': page['width'] },
     'axis_setup': axis_setup,
     'curves': selected_curves,
   }
@@ -282,15 +328,10 @@ if __name__ == "__main__":
       json.dump(curves, f)
 
   if args.out_pdf:
-    plt.xscale('log' if calib_data['x']['log'] else 'linear')
-    plt.yscale('log' if calib_data['y']['log'] else 'linear')
-    for curve in curves['curves']:
-      if 'y_up' not in curve:
-        plt.plot(curve['x'], curve['y'], linewidth=curve['linewidth'], color=curve['stroking_color'])
-      else:
-        plt.fill_between(curve['x'], curve['y_up'], curve['y_down'], color=curve['stroking_color'])
-    if len(curves['axis_setup']['x']['range']) == 2:
-      plt.xlim(curves['axis_setup']['x']['range'])
-    if len(curves['axis_setup']['y']['range']) == 2:
-      plt.ylim(curves['axis_setup']['y']['range'])
-    plt.savefig(args.out_pdf, bbox_inches='tight')
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.dirname(file_dir)
+    if base_dir not in sys.path:
+      sys.path.append(base_dir)
+    __package__ = os.path.split(file_dir)[-1]
+    from .plot_curves import plot_curves
+    plot_curves(curves, args.out_pdf)
