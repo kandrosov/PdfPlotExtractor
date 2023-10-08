@@ -49,6 +49,8 @@ def get_rgb_color(color):
         if not (isinstance(c, float) or isinstance(c, int)):
           return None
       return color
+    if len(color) == 1:
+      color = color[0]
   if isinstance(color, float) or isinstance(color, int):
     color = str(color)
   try:
@@ -95,7 +97,8 @@ def create_calib(page, calib_file, max_rel_tick_length):
       for px, py in tick_line['pts']:
         x.append(px)
         y.append(page_h-py)
-      plt.plot(x, y, color=tick_line['stroking_color'])
+      color = get_rgb_color(tick_line['stroking_color'])
+      plt.plot(x, y, color=color)
 
     if limit_lines:
       for limit_line in limit_lines:
